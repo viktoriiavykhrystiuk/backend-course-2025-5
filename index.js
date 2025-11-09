@@ -1,123 +1,102 @@
 #!/usr/bin/env node
-import { Command } from "commander";
-import http from "http";
-import { promises as fs } from "fs";
-import path from "path";
-import superagent from "superagent";
 
-// -------------------------
-// 1. Налаштування Commander
-// -------------------------
+const http = require('node:http');
+const fs = require('node:fs/promises');
+const path = require('node:path');
+const { Command } = require('commander');
+const superagent = require('superagent');
+
+// === 1. Обробка аргументів командного рядка ===
 const program = new Command();
 
 program
-  .requiredOption("-h, --host <host>", "Host address")
-  .requiredOption("-p, --port <port>", "Port number")
-  .requiredOption("-c, --cache <path>", "Cache directory path");
+  .requiredOption('--host <host>', 'server host (required)')
+  .requiredOption('--port <port>', 'server port (required)', parseInt)
+  .requiredOption('--cache <dir>', 'path to cache directory (required)');
 
 program.parse(process.argv);
 
-const { host, port, cache } = program.opts();
+const options = program.opts();
+const HOST = options.host;
+const PORT = options.port;
+const CACHE_DIR = path.resolve(options.cache);
 
-// -------------------------
-// 2. Перевірка кеш-директорії
-// -------------------------
+// === 2. Перевірка та створення кеш-папки ===
 async function ensureCacheDir() {
   try {
-    await fs.access(cache);
-  } catch {
-    await fs.mkdir(cache, { recursive: true });
-    console.log(`✅ Створено теку для кешу: ${cache}`);
+    await fs.mkdir(CACHE_DIR, { recursive: true });
+  } catch (err) {
+    console.error('❌ Failed to create cache directory:', err);
+    process.exit(1);
   }
 }
 
-// -------------------------
-// 3. Обробка HTTP-запитів
-// -------------------------
-const server = http.createServer(async (req, res) => {
-  const urlParts = req.url.split("/");
-  const code = urlParts[1];
+// === 3. Обробка HTTP-запитів ===
+async function handleRequest(req, res) {
+  const url = req.url;
+  const method = req.method;
 
-  // якщо не передано код (наприклад, просто /)
-  if (!code) {
-    res.writeHead(400, { "Content-Type": "text/plain" });
-    res.end("Bad request: відсутній HTTP код у URL (наприклад, /200)");
-    return;
+  // Наприклад: /200 → код 200
+  const match = url.match(/^\/(\d{3})$/);
+  if (!match) {
+    res.writeHead(400, { 'Content-Type': 'text/plain' });
+    return res.end('Invalid URL. Use /<status_code>');
   }
 
-  const filePath = path.join(cache, `${code}.jpg`);
+  const statusCode = match[1];
+  const filePath = path.join(CACHE_DIR, `${statusCode}.jpg`);
 
   try {
-    switch (req.method) {
-      // -------------------------
-      // GET — отримання з кешу або з http.cat
-      // -------------------------
-      case "GET":
-        try {
-          const data = await fs.readFile(filePath);
-          res.writeHead(200, { "Content-Type": "image/jpeg" });
-          res.end(data);
-        } catch {
-          console.log(`📥 Завантаження з http.cat: ${code}`);
-          try {
-            const response = await superagent.get(`https://http.cat/${code}`);
-            const image = response.body;
-            await fs.writeFile(filePath, image);
-            res.writeHead(200, { "Content-Type": "image/jpeg" });
-            res.end(image);
-          } catch {
-            res.writeHead(404, { "Content-Type": "text/plain" });
-            res.end("Not Found");
-          }
-        }
-        break;
+    if (method === 'GET') {
+      // === GET: Повернути файл з кешу або завантажити ===
+      try {
+        const file = await fs.readFile(filePath);
+        res.writeHead(200, { 'Content-Type': 'image/jpeg' });
+        return res.end(file);
+      } catch {
+        console.log(`🟡 [MISS] Downloading image ${statusCode}...`);
+        const response = await superagent.get(`https://http.cat/${statusCode}`);
+        await fs.writeFile(filePath, response.body);
+        res.writeHead(200, { 'Content-Type': 'image/jpeg' });
+        return res.end(response.body);
+      }
 
-      // -------------------------
-      // PUT — зберегти/оновити картинку в кеші
-      // -------------------------
-      case "PUT":
-        const chunks = [];
-        for await (const chunk of req) chunks.push(chunk);
-        const buffer = Buffer.concat(chunks);
-        await fs.writeFile(filePath, buffer);
-        res.writeHead(201, { "Content-Type": "text/plain" });
-        res.end("Created");
-        break;
+    } else if (method === 'PUT') {
+      // === PUT: Перезаписати файл у кеші ===
+      let body = [];
+      for await (const chunk of req) body.push(chunk);
+      const buffer = Buffer.concat(body);
+      await fs.writeFile(filePath, buffer);
+      res.writeHead(201, { 'Content-Type': 'text/plain' });
+      return res.end(`✅ Cached image for code ${statusCode}`);
 
-      // -------------------------
-      // DELETE — видалити з кешу
-      // -------------------------
-      case "DELETE":
-        try {
-          await fs.unlink(filePath);
-          res.writeHead(200, { "Content-Type": "text/plain" });
-          res.end("Deleted");
-        } catch {
-          res.writeHead(404, { "Content-Type": "text/plain" });
-          res.end("Not Found");
-        }
-        break;
+    } else if (method === 'DELETE') {
+      // === DELETE: Видалити файл із кешу ===
+      await fs.unlink(filePath);
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      return res.end(`🗑️ Deleted cached image ${statusCode}`);
 
-      // -------------------------
-      // Інші методи
-      // -------------------------
-      default:
-        res.writeHead(405, { "Content-Type": "text/plain" });
-        res.end("Method Not Allowed");
+    } else {
+      res.writeHead(405, { 'Content-Type': 'text/plain' });
+      return res.end('Method Not Allowed');
     }
   } catch (err) {
-    console.error(err);
-    res.writeHead(500, { "Content-Type": "text/plain" });
-    res.end("Internal Server Error");
+    res.writeHead(500, { 'Content-Type': 'text/plain' });
+    res.end('Internal Server Error: ' + err.message);
   }
-});
+}
 
-// -------------------------
-// 4. Запуск сервера
-// -------------------------
-await ensureCacheDir();
+// === 4. Запуск сервера ===
+async function startServer() {
+  await ensureCacheDir();
 
-server.listen(port, host, () => {
-  console.log(`✅ Проксі-сервер запущено на http://${host}:${port}`);
-  console.log(`📂 Кеш-директорія: ${cache}`);
-});
+  const server = http.createServer(handleRequest);
+  server.listen(PORT, HOST, () => {
+    console.log(`✅ Server running at http://${HOST}:${PORT}`);
+    console.log(`📂 Cache directory: ${CACHE_DIR}`);
+    console.log('🚀 Ready for GET, PUT, DELETE requests!');
+  });
+}
+
+startServer();
+

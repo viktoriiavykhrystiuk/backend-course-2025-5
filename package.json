@@ -1,19 +1,19 @@
 {
-  "name": "backend-course-2025-5",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "start": "node index.js"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "dependencies": {
-    "commander": "^14.0.2",
-    "superagent": "^10.2.3"
-  },
-  "devDependencies": {
-    "nodemon": "^3.1.10"
-  }
+"name": "backend-course-2025-5",
+"version": "1.0.0",
+"description": "Примітивний кешуючий проксі-сервер для https://http.cat",
+"main": "index.js",
+"scripts": {
+"start": "node index.js -h 127.0.0.1 -p 3000 -c ./cache",
+"dev": "nodemon index.js -h 127.0.0.1 -p 3000 -c ./cache"
+},
+"author": "viktoriiavykhrystiuk bc2024-5 <viktoriiavykhrystiuk@gmail.com>",
+"license": "MIT",
+"dependencies": {
+"commander": "^11.0.0",
+"superagent": "^8.0.0"
+},
+"devDependencies": {
+"nodemon": "^3.0.1"
+}
 }
