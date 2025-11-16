@@ -46,45 +46,49 @@ async function handleRequest(req, res) {
   const statusCode = match[1];
   const filePath = path.join(CACHE_DIR, `${statusCode}.jpg`);
 
+  if (method === 'GET') {
+  // === GET: Повернути файл з кешу або завантажити ===
   try {
-    if (method === 'GET') {
-      // === GET: Повернути файл з кешу або завантажити ===
-      try {
-        const file = await fs.readFile(filePath);
-        res.writeHead(200, { 'Content-Type': 'image/jpeg' });
-        return res.end(file);
-      } catch {
-        console.log(`🟡 [MISS] Downloading image ${statusCode}...`);
-        const response = await superagent.get(`https://http.cat/${statusCode}`);
-        await fs.writeFile(filePath, response.body);
-        res.writeHead(200, { 'Content-Type': 'image/jpeg' });
-        return res.end(response.body);
-      }
+    const file = await fs.readFile(filePath);
+    res.writeHead(200, { 'Content-Type': 'image/jpeg' });
+    return res.end(file);
+  } catch {
+    try {
+      console.log(`🟡 [MISS] Downloading image ${statusCode}...`);
+      const response = await superagent.get(`https://http.cat/${statusCode}`);
 
-    } else if (method === 'PUT') {
-      // === PUT: Перезаписати файл у кеші ===
-      let body = [];
-      for await (const chunk of req) body.push(chunk);
-      const buffer = Buffer.concat(body);
-      await fs.writeFile(filePath, buffer);
-      res.writeHead(201, { 'Content-Type': 'text/plain' });
-      return res.end(`✅ Cached image for code ${statusCode}`);
+      await fs.writeFile(filePath, response.body);
 
-    } else if (method === 'DELETE') {
-      // === DELETE: Видалити файл із кешу ===
-      await fs.unlink(filePath);
-      res.writeHead(200, { 'Content-Type': 'text/plain' });
-      return res.end(`🗑️ Deleted cached image ${statusCode}`);
-
-    } else {
-      res.writeHead(405, { 'Content-Type': 'text/plain' });
-      return res.end('Method Not Allowed');
+      res.writeHead(200, { 'Content-Type': 'image/jpeg' });
+      return res.end(response.body);
+    } catch {
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      return res.end('Not Found');
     }
-  } catch (err) {
-    res.writeHead(500, { 'Content-Type': 'text/plain' });
-    res.end('Internal Server Error: ' + err.message);
   }
+
+} else if (method === 'PUT') {
+  // === PUT: Перезаписати файл у кеші ===
+  let body = [];
+  for await (const chunk of req) body.push(chunk);
+  const buffer = Buffer.concat(body);
+  await fs.writeFile(filePath, buffer);
+  res.writeHead(201, { 'Content-Type': 'text/plain' });
+  return res.end(`✅ Cached image for code ${statusCode}`);
+
+} else if (method === 'DELETE') {
+  // === DELETE: Видалити файл із кешу ===
+  try {
+    await fs.unlink(filePath);
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    return res.end(`🗑️ Deleted cached image ${statusCode}`);
+  } catch {
+    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    return res.end('Not Found');
+  }
+ }
 }
+ 
 
 // === 4. Запуск сервера ===
 async function startServer() {
